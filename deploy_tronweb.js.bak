@@ -1,0 +1,79 @@
+// deploy_tronweb.js (مُحدَّث لدعم Node.js الحديثة)
+const TronWebModule = require('tronweb');
+const TronWeb = TronWebModule.default || TronWebModule;
+const fs = require('fs');
+
+const fullNode = 'https://api.trongrid.io';
+const solidityNode = 'https://api.trongrid.io';
+const eventServer = 'https://api.trongrid.io';
+
+// اقرأ PRIVATE_KEY من متغيّر البيئة
+const privateKey = process.env.PRIVATE_KEY || '';
+if (!privateKey) {
+  console.error('ERROR: يجب تعيين PRIVATE_KEY كمتغيّر بيئة قبل التشغيل');
+  console.error('مثال: export PRIVATE_KEY="b5dcc9..."');
+  process.exit(1);
+}
+
+const tronWeb = new TronWeb({
+  fullHost: fullNode,
+  privateKey: privateKey
+});
+
+(async () => {
+  try {
+    const account = tronWeb.address.fromPrivateKey(privateKey);
+    console.log('Using address:', account);
+
+    // تحقق من الرصيد (بالـSun) ثم بالـTRX
+    const balanceSun = await tronWeb.trx.getBalance(account);
+    const balanceTRX = (balanceSun || 0) / 1e6;
+    console.log('Balance (TRX):', balanceTRX);
+
+    if (balanceTRX < 0.05) {
+      console.warn('تحذير: قد تحتاج إلى بعض TRX لدفع رسوم النشر. أضف TRX إذا لزم.');
+    }
+
+    // اقرأ ABI و bytecode
+    const abiPath = 'USDT_abi.json';
+    const bytecodePath = 'USDT_bytecode.txt';
+    if (!fs.existsSync(abiPath) || !fs.existsSync(bytecodePath)) {
+      console.error('ERROR: لم أجد USDT_abi.json أو USDT_bytecode.txt في المجلد الحالي');
+      process.exit(1);
+    }
+
+    const abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'));
+    const bytecode = fs.readFileSync(bytecodePath, 'utf8').trim();
+
+    console.log('Deploying contract... (this may take a minute)');
+    const deployOptions = {
+      abi,
+      bytecode,
+      parameters: []
+    };
+
+    const tx = await tronWeb.contract().deploy(deployOptions, {
+      feeLimit: 100_000_000, // غير إن احتجت زيادة
+      callValue: 0
+    });
+
+    // بعض إصدارات tronweb تعيد object مختلف لذلك نعالج بعناية
+    if (tx && tx.transaction && tx.transaction.txID) {
+      console.log('Transaction ID:', tx.transaction.txID);
+    } else if (tx && tx.txid) {
+      console.log('Transaction ID:', tx.txid);
+    } else {
+      console.log('Transaction response:', tx);
+    }
+
+    // حاول استخراج العنوان اذا متوفر فوراً
+    if (tx && tx.address) {
+      console.log('Contract deployed at address:', tx.address);
+    } else {
+      console.log('لم يُرجع العنوان فوراً انتظر تأكيد الترانزاكشن ثم استعلم عن العنوان باستخدام trx.getTransactionReceipt أو عبر tronstats/tronscan');
+    }
+
+  } catch (err) {
+    console.error('Deployment error:', err);
+  }
+})();
